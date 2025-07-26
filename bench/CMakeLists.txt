@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5)
 project(mimalloc-bench CXX C)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -55,6 +55,7 @@ target_compile_options(espresso PRIVATE $<$<C_COMPILER_ID:GNU>:-std=gnu89>)
 target_link_libraries(espresso m)
 
 add_executable(barnes ${barnes_sources})
+target_compile_options(barnes PRIVATE $<$<C_COMPILER_ID:GNU>:-std=gnu89>)
 target_link_libraries(barnes m)
 
 add_executable(larson larson/larson.cpp)

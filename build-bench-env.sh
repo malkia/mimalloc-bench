@@ -37,11 +37,11 @@ rebuild=0
 all=0
 
 # allocator versions
-readonly version_dh=master   # ~unmaintained
+readonly version_dh=master
 readonly version_ff=master   # ~unmaintained since 2021
 readonly version_fg=master   # ~unmaintained since 2018
 readonly version_gd=master   # ~unmaintained since 2021
-readonly version_hd=5afe855  # 3.13 #a43ac40 #d880f72  #9d137ef37
+readonly version_hd=6577c22b # HEAD as of 2025-07-18, no release since 2019
 readonly version_hm=11
 readonly version_iso=1.2.5
 readonly version_je=5.3.0
@@ -61,8 +61,8 @@ readonly version_sg=master   # ~unmaintained since 2021
 readonly version_sm=master   # ~unmaintained since 2017
 readonly version_sn=0.7.1
 readonly version_tbb=v2021.9.0
-readonly version_tc=gperftools-2.16
-readonly version_tcg=8febb4b4da2ab3b04862a8676fb5b506ef90aa42 # 2024-07-30
+readonly version_tc=gperftools-2.16.90
+readonly version_tcg=98fd24303c7b5ef5e30da625f11fb623a5e038b6 # 2025-07-18
 readonly version_yal=main
 
 # benchmark versions
@@ -70,6 +70,7 @@ readonly version_redis=6.2.7
 readonly version_lean=21d264a66d53b0a910178ae7d9529cb5886a39b6 # build fix for recent compilers
 readonly version_rocksdb=8.1.1
 readonly version_lua=v5.4.7
+readonly version_linux=6.5.1
 
 # HTTP-downloaded files checksums
 readonly sha256sum_sh6bench="506354d66b9eebef105d757e055bc55e8d4aea1e7b51faab3da35b0466c923a1"
@@ -109,6 +110,7 @@ setup_bench=0
 setup_lean=0
 setup_redis=0
 setup_rocksdb=0
+setup_linux=0
 
 # various
 setup_packages=0
@@ -168,6 +170,7 @@ while : ; do
         setup_lean=$flag_arg
         setup_redis=$flag_arg
         setup_rocksdb=$flag_arg
+        setup_linux=$flag_arg
         setup_bench=$flag_arg
         setup_packages=$flag_arg
         ;;
@@ -215,6 +218,8 @@ while : ; do
         setup_redis=$flag_arg;;
     rocksdb)
         setup_rocksdb=$flag_arg;;
+    linux)
+        setup_linux=$flag_arg;;
     rp)
         setup_rp=$flag_arg;;
     sc)
@@ -281,6 +286,7 @@ while : ; do
         echo "  packages                     setup required packages"
         echo "  redis                        setup redis benchmark"
         echo "  rocksdb                      setup rocksdb benchmark"
+        echo "  linux                        setup linux benchmark"
         echo ""
         echo "Prefix an option with 'no-' to disable an option"
         exit 0;;
@@ -415,7 +421,7 @@ function dnfinstallbazel {
   echo ""
   dnfinstall dnf-plugins-core
   $SUDO dnf copr -y enable vbatts/bazel
-  dnfinstall bazel4
+  dnfinstall bazel5
 }
 
 if test "$all" = "1"; then
@@ -436,7 +442,8 @@ if test "$setup_packages" = "1"; then
     dnfinstall "gcc-c++ clang lld llvm-devel unzip dos2unix bc gmp-devel wget gawk \
       cmake python3 ruby ninja-build libtool autoconf git patch time sed \
       ghostscript libatomic which gflags-devel xz readline-devel snappy-devel"
-    dnfinstallbazel
+    # bazel5 is broken on the copr: https://github.com/bazelbuild/bazel/issues/19295
+    #dnfinstallbazel
   elif grep -q -e 'ID=debian' -e 'ID=ubuntu' /etc/os-release 2>/dev/null; then
     echo "updating package database... ($SUDO apt update)"
     $SUDO apt update -qq
@@ -455,6 +462,8 @@ if test "$setup_packages" = "1"; then
   elif brew --version 2> /dev/null >/dev/null; then
     brewinstall "dos2unix wget cmake ninja automake libtool gnu-time gmp mpir gnu-sed \
       ghostscript bazelisk gflags snappy"
+  elif grep -q 'Arch Linux' /etc/os-release; then
+    sudo pacman -S dos2unix wget cmake ninja automake libtool time gmp sed ghostscript bazelisk gflags snappy
   fi
 fi
 
@@ -499,7 +508,7 @@ if test "$setup_scudo" = "1"; then
   partial_checkout scudo $version_scudo https://github.com/llvm/llvm-project "compiler-rt/lib/scudo/standalone"
   cd "compiler-rt/lib/scudo/standalone"
   # TODO: make the next line prettier instead of hardcoding everything.
-  clang++ -flto -fuse-ld=lld -fPIC -std=c++14 -fno-exceptions $CXXFLAGS -fno-rtti -fvisibility=internal -msse4.2 -O3 -I include -shared -o libscudo$extso *.cpp -pthread
+  clang++ -flto -fuse-ld=lld -fPIC -std=c++17 -fno-exceptions $CXXFLAGS -fno-rtti -fvisibility=internal -msse4.2 -O3 -I include -shared -o libscudo$extso *.cpp -pthread
   cd -
   popd
 fi
@@ -542,7 +551,11 @@ if test "$setup_pa" = "1"; then
   checkout pa $version_pa https://github.com/1c3t3a/partition_alloc_builder.git
 
   # Setup depot_tools for building
-  git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git --depth=1
+  if test -d depot_tools; then
+    echo "depot_tools alrady exist, no cloning"
+  else
+    git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git --depth=1
+  fi
   export PATH="$PATH:$PWD/depot_tools"
 
   # Fetch sources - this relies on a standalone build of PA
@@ -565,11 +578,10 @@ if test "$setup_dh" = "1"; then
   checkout dh $version_dh https://github.com/emeryberger/DieHard
   # remove all the historical useless junk
   rm -rf ./benchmarks/ ./src/archipelago/ ./src/build/ ./src/exterminator/ ./src/local/ ./src/original-diehard/ ./src/replicated/ ./docs
-  if test "$darwin" = "1"; then
-    TARGET=libdieharder make -C src macos
-  else
-    TARGET=libdieharder make -C src linux-gcc-64
-  fi
+  cd src
+  cmake -S . -B build
+  cmake --build build -j `nproc`
+  cd ../..
   popd
 fi
 
@@ -596,17 +608,6 @@ fi
 
 if test "$setup_tcg" = "1"; then
   checkout tcg $version_tcg https://github.com/google/tcmalloc
-  ORIG=""
-  if test "$darwin" = "1"; then
-    ORIG="_orig"
-  fi
-  sed -i $ORIG '/linkstatic/d' tcmalloc/BUILD
-  sed -i $ORIG '/linkstatic/d' tcmalloc/internal/BUILD
-  sed -i $ORIG '/linkstatic/d' tcmalloc/testing/BUILD
-  sed -i $ORIG '/linkstatic/d' tcmalloc/variants.bzl
-  gawk -i inplace '(f && g) {$0="linkshared = True, )"; f=0; g=0} /This library provides tcmalloc always/{f=1} /alwayslink/{g=1} 1' tcmalloc/BUILD
-  gawk -i inplace 'f{$0="cc_binary("; f=0} /This library provides tcmalloc always/{f=1} 1' tcmalloc/BUILD # Change the line after "This library…" to cc_binary (instead of cc_library)
-  gawk -i inplace '/alwayslink/ && !f{f=1; next} 1' tcmalloc/BUILD # delete only the first instance of "alwayslink"
   bazel build -c opt tcmalloc
   popd
 fi
@@ -759,7 +760,7 @@ if test "$setup_rocksdb" = "1"; then
   phase "build rocksdb $version_rocksdb"
 
   pushd "$devdir"
-  if test -d "redis-$version_rocksdb"; then
+  if test -d "rocksdb-$version_rocksdb"; then
     echo "$devdir/rocksdb-$version_rocksdb already exists; no need to download it"
   else
     wget --no-verbose "https://github.com/facebook/rocksdb/archive/refs/tags/v$version_rocksdb.tar.gz" -O rocksdb-$version_rocksdb.tar.gz
@@ -768,7 +769,10 @@ if test "$setup_rocksdb" = "1"; then
   fi
 
   cd "rocksdb-$version_rocksdb"
-  DISABLE_WARNING_AS_ERROR=1 DISABLE_JEMALLOC=1 make db_bench -j $procs
+  set +e
+  patch -p1 -N -r- < ../../patches/rocksdb_build.patch > /dev/null
+  set -e
+  DISABLE_WARNING_AS_ERROR=1 DISABLE_JEMALLOC=1 ROCKSDB_DISABLE_TCMALLOC=1 make db_bench -j $procs
   [ "$CI" ] && find . -name '*.o' -delete
   popd
 fi
@@ -853,6 +857,18 @@ if test "$setup_bench" = "1"; then
   cmake --build out/bench --parallel $procs
 fi
 
+if test "$setup_linux" = "1"; then
+  phase "fetch linux"
+  pushd "$devdir"
+  if test -d "linux-$version_linux"; then
+    echo "$devdir/linux-$version_linux already exists; no need to download it"
+  else
+    wget --no-verbose "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$version_linux.tar.xz"
+    tar xf "linux-$version_linux.tar.xz"
+    rm "./linux-$version_linux.tar.xz"
+  fi
+  popd
+fi
 
 curdir=`pwd`
 
